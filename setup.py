@@ -3,9 +3,10 @@
 
 """The setup script."""
 
-from setuptools import setup, find_packages
+import versioneer
+from setuptools import setup
 
-with open('README.rst') as readme_file:
+with open('README.md') as readme_file:
     readme = readme_file.read()
 
 
@@ -27,17 +28,18 @@ setup(
             'jump=jump.jump:main',
         ],
     },
-    install_requires=['Click>=6.0', 'plumbum'],
+    #install_requires=['click >= 6.0', 'plumbum >= 1.5'],
     license="MIT license",
     long_description=readme,
     include_package_data=True,
     keywords='jump',
     name='jump',
     packages=['jump'],
-    setup_requires=['pytest-runner', ],
-    test_suite='tests',
-    tests_require=['pytest', ],
+    #setup_requires=['pytest-runner', ],
+    #test_suite='tests',
+    #tests_require=['pytest', ],
     url='https://github.com/Olllom/jump',
-    version='0.1.0',
-    zip_safe=False,
+    version=versioneer.get_version(),
+    cmdclass=versioneer.get_cmdclass(),
+    #zip_safe=False,
 )
