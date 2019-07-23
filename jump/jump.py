@@ -116,10 +116,6 @@ def main(remote_name, conda_env, user, kill):
     """
     Jump on a jupyter notebook that is running on a remote
     server in a conda environment.
-
-    Usage:
-
-        jump [OPTIONS] remotename
     """
     print(colors.green | "Trying to establish a connection to {}".format(remote_name))
     remote = Remote(remote_name)
