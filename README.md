@@ -2,6 +2,9 @@
 jump
 ====
 
+[![Conda Version](https://img.shields.io/conda/vn/conda-forge/jump.svg)](https://anaconda.org/conda-forge/jump) 
+[![Conda Downloads](https://img.shields.io/conda/dn/conda-forge/jump.svg)](https://anaconda.org/conda-forge/jump) 
+
 Running remote jupyter notebooks in a local browser window.
 
 Free software: MIT license
@@ -33,7 +36,7 @@ On remote machine:
 - jupyter notebook (at least installed in one conda environment, jupyter > 5.1 required for the --kill option)
 - recommended: nb_conda
 
-Windows systems are note supported.
+Windows systems are not supported.
 
 Efficient SSH Setup
 -------------------
