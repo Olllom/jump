@@ -184,37 +184,38 @@ def run_remote(remote_name, conda_env, user, kill):
     print(colors.green | "Trying to run jupyter notebook in remote conda environment {}".format(conda_env))
 
     # Get a list of running notebooks
-    jupyter = remote.machine["{}/bin/jupyter".format(conda_environment_paths[conda_env])]
-    try:
-        running = jupyter("notebook", "list")
-    except:
-        raise JumpException("Fatal: Jupyter is not installed in remote conda environment {}".format(conda_env))
-    running = remote.strip_talk(running).split(os.linesep)[1:]
+    with remote.machine:
+        jupyter = remote.machine["{}/bin/jupyter".format(conda_environment_paths[conda_env])]
+        try:
+            running = jupyter("notebook", "list")
+        except:
+            raise JumpException("Fatal: Jupyter is not installed in remote conda environment {}".format(conda_env))
+        running = remote.strip_talk(running).split(os.linesep)[1:]
 
-    # no notebooks running: Ask the user, whether they want to start a new server
-    if len(running) == 0:
-        print(colors.warn | "No servers running on remote.")
-        start_new = user_input(
-            "Would you like to start a new jupyter notebook server? (y/n)",
-            is_valid=lambda x: x in "yn",
-            hint="Enter y or n."
-        )
-        if start_new == 'n':
-            return 1
-        else: # 'y'
-            # Start notebook
-            print("Starting notebook server on remote {} in environment {}".format(remote.name, conda_env))
-            jupyter["notebook", "--no-browser"] & BG # running in the background
+        # no notebooks running: Ask the user, whether they want to start a new server
+        if len(running) == 0:
+            print(colors.warn | "No servers running on remote.")
+            start_new = user_input(
+                "Would you like to start a new jupyter notebook server? (y/n)",
+                is_valid=lambda x: x in "yn",
+                hint="Enter y or n."
+            )
+            if start_new == 'n':
+                return 1
+            else: # 'y'
+                # Start notebook
+                print("Starting notebook server on remote {} in environment {}".format(remote.name, conda_env))
+                jupyter["notebook", "--no-browser"] & BG # running in the background
 
-            # Wait for server to start; update list of running servers
-            print("    Waiting for remote notebook server to start...")
-            started = False
-            while not started:
-                time.sleep(1)
-                running = jupyter("notebook", "list")
-                running = remote.strip_talk(running).split(os.linesep)[1:]
-                started = (len(running) > 0)
-            print(colors.green | "Remote notebook server started.")
+                # Wait for server to start; update list of running servers
+                print("    Waiting for remote notebook server to start...")
+                started = False
+                while not started:
+                    time.sleep(1)
+                    running = jupyter("notebook", "list")
+                    running = remote.strip_talk(running).split(os.linesep)[1:]
+                    started = (len(running) > 0)
+                print(colors.green | "Remote notebook server started.")
 
         # One notebook server running: Use this!
         if len(running) < 2:

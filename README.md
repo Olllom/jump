@@ -12,7 +12,7 @@ Getting Started
 
 ```bash
 conda install -c conda-forge jump
-jump <remotename>
+jump REMOTENAME
 ```
 
 For options, type
