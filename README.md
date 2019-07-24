@@ -7,18 +7,33 @@ Running remote jupyter notebooks in a local browser window.
 Free software: MIT license
 
 
+Getting Started
+---------------
+
+```bash
+conda install -c conda-forge jump
+jump <remotename>
+```
+
+For options, type
+```bash
+jump --help
+```
+
 
 Requirements
 ------------
 
 On local (UNIX) machine:
-- plumbum and click
+- plumbum and click (are installed by the conda install command)
 - ssh
 
 On remote machine:
 - anaconda or miniconda
 - jupyter notebook (at least installed in one conda environment, jupyter > 5.1 required for the --kill option)
 - recommended: nb_conda
+
+Windows systems are note supported.
 
 Efficient SSH Setup
 -------------------
