@@ -17,6 +17,7 @@ import textwrap
 from collections import OrderedDict
 
 from plumbum import SshMachine, BG, colors
+from jump import __version__
 
 import click
 
@@ -137,6 +138,48 @@ class Remote(object):
             env_dict[line.split()[0]] = line.split()[1]
         return env_dict
 
+    def start_notebook_server(self, jupyter_command, modules, running_servers):
+        """
+        Start a new notebook server.
+
+        Args:
+            jupyter_command (plumbum remote command): The jupyter executable on the remote
+            modules (iterable): A list or tuple of modules that should be loaded on the remote
+            running_servers (list): A list of servers that are running
+
+        Returns:
+            running_servers (list): Updated list of running servers
+            server_id (list): Index of the server that was just started
+        """
+        if modules:
+            # try if the module loading works
+            print(f"    Trying to load modules {modules}")
+            load_command = " && module load ".join(["source /etc/profile"] + list(modules))
+            with subprocess.Popen(["ssh", self.name, load_command]) as ssh:
+                ssh.communicate()
+                if ssh.returncode:
+                    raise JumpException(f"Failed to load modules")
+            print(f"    Module loading successful")
+            # Start the notebook server
+            print(colors.green | f"    Trying to start server with modules loaded")
+            notebook_command = f'{load_command} && {jupyter_command.executable} notebook --no-browser &'
+            subprocess.Popen(["ssh", self.name, notebook_command], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+
+        else:
+            jupyter_command["notebook", "--no-browser"] & BG  # running in the background
+
+        # Wait for server to start; update list of running servers
+        print("    Waiting for remote notebook server to start...")
+        running = []
+        while len(running) <= len(running_servers):
+            time.sleep(1)
+            running = jupyter_command("notebook", "list")
+            running = self.strip_talk(running).split(os.linesep)[1:]
+        new_servers = [i for i,s in enumerate(running) if s not in running_servers]
+        assert len(new_servers) == 1
+        print(colors.green | "Remote notebook server started.")
+        return running, new_servers[0]
+
 
 def get_free_local_socket():
     """
@@ -155,19 +198,30 @@ def get_free_local_socket():
 @click.option("-u", "--user", default=None,
               help="User name on remote machine. Not required,"
                    "if your local ~/.ssh/config file is configured properly.")
+@click.option("-m", "--module", multiple=True, help="Modules to be loaded before starting up the notebook server.")
+@click.option("--new/--no-new", default=False,
+              help="Start a new server even if servers are still running on the remote.")
 @click.option("--kill/--no-kill", default=False,
               help="Kill notebook servers running on remote.")
-def run_remote(remote_name, conda_env, user, kill):
+@click.version_option(__version__)
+def run_remote(remote_name, conda_env, user, module, new, kill):
     """
     Jump on a jupyter notebook that is running on a remote
     server in a conda environment.
     """
+
+
+    # STEP 1: REMOTE
+    # ==============
     if platform.system() == "Windows":
         raise JumpException("Sorry, Windows operating systems are not supported, yet.")
 
     print(colors.green | "Trying to establish a connection to {}".format(remote_name))
     remote = Remote(remote_name, user)
 
+
+    # STEP 2: CONDA ENVIRONMENT
+    # =========================
     # Check if conda environment is specified, else prompt for it
     conda_environment_paths = remote.get_conda_envs()
     if conda_env is None:
@@ -176,15 +230,19 @@ def run_remote(remote_name, conda_env, user, kill):
         i = user_input(
             "Enter the ID of the remote conda environment that would you like to run the notebook in:",
             type_conversion=int,
-            is_valid=lambda x: x>0 and x<=len(conda_environment_paths),
+            is_valid=lambda x: 0 < x <= len(conda_environment_paths),
             hint="Enter a number between 1 and {}".format(len(conda_environment_paths))
         )
         conda_env = list(conda_environment_paths.items())[i-1][0]
 
     print(colors.green | "Trying to run jupyter notebook in remote conda environment {}".format(conda_env))
 
-    # Get a list of running notebooks
+
+    # STEP 3: NOTEBOOK SERVER
+    # =======================
     with remote.machine:
+
+        # Get a list of running notebooks
         jupyter = remote.machine["{}/bin/jupyter".format(conda_environment_paths[conda_env])]
         try:
             running = jupyter("notebook", "list")
@@ -192,8 +250,19 @@ def run_remote(remote_name, conda_env, user, kill):
             raise JumpException("Fatal: Jupyter is not installed in remote conda environment {}".format(conda_env))
         running = remote.strip_talk(running).split(os.linesep)[1:]
 
-        # no notebooks running: Ask the user, whether they want to start a new server
-        if len(running) == 0:
+        if module and (running and not new):
+            print(colors.warn | "Warning: -m/--module argument will be ignored because server is already running. "
+                                "If you want to force-start a new server in an environment that has the modules loaded "
+                                "use the --new keyword.")
+
+        # Either start a new server or grab an existing one
+        if new:
+            # start a new server without asking
+            print("Starting notebook server on remote {} in environment {}".format(remote.name, conda_env))
+            running, server_id = remote.start_notebook_server(jupyter, module, running)
+
+        elif len(running) == 0:
+            # no notebooks running: Ask user whether they want to start a new server
             print(colors.warn | "No servers running on remote.")
             start_new = user_input(
                 "Would you like to start a new jupyter notebook server? (y/n)",
@@ -202,46 +271,42 @@ def run_remote(remote_name, conda_env, user, kill):
             )
             if start_new == 'n':
                 return 1
-            else: # 'y'
-                # Start notebook
-                print("Starting notebook server on remote {} in environment {}".format(remote.name, conda_env))
-                jupyter["notebook", "--no-browser"] & BG # running in the background
+            print("Starting notebook server on remote {} in environment {}".format(remote.name, conda_env))
+            running, server_id = remote.start_notebook_server(jupyter, module, running)
 
-                # Wait for server to start; update list of running servers
-                print("    Waiting for remote notebook server to start...")
-                started = False
-                while not started:
-                    time.sleep(1)
-                    running = jupyter("notebook", "list")
-                    running = remote.strip_talk(running).split(os.linesep)[1:]
-                    started = (len(running) > 0)
-                print(colors.green | "Remote notebook server started.")
+        elif len(running) == 1:
+            # One notebook server running: Use that one
+            server_id = 0
 
-        # One notebook server running: Use this!
-        if len(running) < 2:
-            running = running[0]
-
-        # Multiple notebook servers running: Ask the user which one to use
-        else:
+        elif len(running) > 1:
+            # Multiple notebook servers running: Ask the user which one to use
             print(colors.warn | "Multiple servers running on remote:")
             for i in range(len(running)):
-                print(colors.blue | "  {:>3}: {}".format(i, running[i]))
-            i = int(input("Which id would you like" + os.linesep))
-            running = running[i]
-        running = running.split(' :')[0]
+                print(colors.blue | "  {:>3}: {}".format(i+1, running[i]))
+            server_id = user_input(
+                "Which id would you like? ",
+                type_conversion=int,
+                is_valid=lambda x: 1 <= x <= len(running),
+                hint=f"Enter a number between 1 and {len(running)}"
+            ) - 1
+
+        notebook_server = running[server_id].split(' :')[0]
 
         # Retrieve port number of remote notebook server
-        print("Using running server.")
-        print("    ", running)
-        remote_port = running.split(":")[2].split("/")[0]
-        remote_path = running.split("/")[3]
+        print(f"Using server: {notebook_server}")
+        remote_port = notebook_server.split(":")[2].split("/")[0]
+        remote_path = notebook_server.split("/")[3]
 
-        # Kill
+
+        # (STEP 3b: KILL)
+        # ===============
         if kill:
-            killing = input(colors.red | "Would you like to kill the notebook server? (y/n)" + os.linesep)
-            while killing not in ["y", "n"]:
-                killing = input("Press y or n" + os.linesep)
-            if killing == 'n':
+            killing = user_input(
+                "Would you like to kill the notebook server? (y/n)",
+                is_valid=lambda x: x in "yn",
+                hint="Enter y or n"
+            )
+            if killing == "n":
                 return 1
             else:
                 print("Killing notebook server running on remote port {}".format(remote_port))
@@ -249,16 +314,19 @@ def run_remote(remote_name, conda_env, user, kill):
                 print(colors.green | "Done.")
                 return 1
 
-        # Bind remote port to a free local port
-        local_port = get_free_local_socket()
-        local_url = "http://localhost:{}/{}".format(local_port, remote_path)
-        print(colors.green | "Opening Tunnel between local port {} and remote port {}".format(local_port, remote_port))
-        os.system("ssh -f {} -L {}:localhost:{} -N".format(remote.name, local_port, remote_port))
 
-        # Open remote server in a local web browser
-        print(colors.green | "Opening web browser at local url:")
-        print("    ", local_url)
-        webbrowser.open(local_url)
+    # STEP 4: OPEN LOCALLY
+    # ====================
+    # Bind remote port to a free local port
+    local_port = get_free_local_socket()
+    local_url = "http://localhost:{}/{}".format(local_port, remote_path)
+    print(colors.green | "Opening Tunnel between local port {} and remote port {}".format(local_port, remote_port))
+    os.system("ssh -f {} -L {}:localhost:{} -N".format(remote.name, local_port, remote_port))
+
+    # Open remote server in a local web browser
+    print(colors.green | "Opening web browser at local url:")
+    print("    ", local_url)
+    webbrowser.open(local_url)
 
 
 def main():

@@ -20,6 +20,28 @@ For options, type
 jump --help
 ```
 
+Examples
+--------
+
+Starting a new notebook server in remote conda environment `myenv` on a remote machine `mycluster`
+```bash
+jump mycluster -e myenv --new
+```
+
+Connecting to an existing notebook server
+```bash
+jump mycluster -e myenv
+```
+
+Starting a new notebook server with remote module `cuda/9.2` loaded for GPU support
+```bash
+jump mycluster -e myenv --new -m cuda/9.2
+```
+
+Killing a notebook server
+```bash
+jump mycluster -e myenv --kill
+```
 
 Requirements
 ------------
