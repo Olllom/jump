@@ -3,9 +3,9 @@
 
 """Tests for `jump` package."""
 
-import pytest
+#import pytest
 
-from click.testing import CliRunner
+#from click.testing import CliRunner
 
 #from jump.jump import jump
 #from jump.jump import cli
