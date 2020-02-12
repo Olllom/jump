@@ -31,7 +31,12 @@ Starting a new notebook server in remote conda environment `myenv` on a remote m
 jump mycluster -e myenv --new
 ```
 
-Connecting to an existing notebook server
+Starting a new jupyter lab server in remote conda environment `myenv` on a remote machine `mycluster`
+```bash
+jump mycluster --lab -e myenv --new
+```
+
+Connecting to an existing jupyter server
 ```bash
 jump mycluster -e myenv
 ```
@@ -56,6 +61,7 @@ On local (UNIX) machine:
 On remote machine:
 - anaconda or miniconda
 - jupyter notebook (at least installed in one conda environment, jupyter > 5.1 required for the --kill option)
+- jupyter lab (to support the `--lab` option)
 - recommended: nb_conda
 
 Windows systems are not supported.
