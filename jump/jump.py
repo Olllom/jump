@@ -1,5 +1,5 @@
 """
-Manage and connect to jupyter notebooks that are running on remote servers (in conda environments).
+Manage and connect to jupyter notebooks/labs that are running on remote servers (in conda environments).
 Requires the python packages click and plumbum on the local machine and conda (+ jupyter and nb_conda)
 on the remote machine.
 
@@ -138,19 +138,21 @@ class Remote(object):
             env_dict[line.split()[0]] = line.split()[1]
         return env_dict
 
-    def start_notebook_server(self, jupyter_command, modules, running_servers):
+    def start_jupyter_server(self, jupyter_command, modules, running_servers, use_jupyter_lab=False):
         """
-        Start a new notebook server.
+        Start a new jupyter server.
 
         Args:
             jupyter_command (plumbum remote command): The jupyter executable on the remote
             modules (iterable): A list or tuple of modules that should be loaded on the remote
             running_servers (list): A list of servers that are running
+            use_jupyter_lab (bool): True to start a jupyter lab server, False for a jupyter notebook server.
 
         Returns:
             running_servers (list): Updated list of running servers
             server_id (list): Index of the server that was just started
         """
+        subcommand = "lab" if use_jupyter_lab else "notebook"
         if modules:
             # try if the module loading works
             print(f"    Trying to load modules {modules}")
@@ -160,16 +162,16 @@ class Remote(object):
                 if ssh.returncode:
                     raise JumpException(f"Failed to load modules")
             print(f"    Module loading successful")
-            # Start the notebook server
+            # Start the server
             print(colors.green | f"    Trying to start server with modules loaded")
-            notebook_command = f'{load_command} && {jupyter_command.executable} notebook --no-browser &'
+            notebook_command = f'{load_command} && {jupyter_command.executable} {subcommand} --no-browser &'
             subprocess.Popen(["ssh", self.name, notebook_command], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
 
         else:
-            jupyter_command["notebook", "--no-browser"] & BG  # running in the background
+            jupyter_command[subcommand, "--no-browser"] & BG  # running in the background
 
         # Wait for server to start; update list of running servers
-        print("    Waiting for remote notebook server to start...")
+        print("    Waiting for remote jupyter server to start...")
         running = []
         while len(running) <= len(running_servers):
             time.sleep(1)
@@ -177,7 +179,7 @@ class Remote(object):
             running = self.strip_talk(running).split(os.linesep)[1:]
         new_servers = [i for i,s in enumerate(running) if s not in running_servers]
         assert len(new_servers) == 1
-        print(colors.green | "Remote notebook server started.")
+        print(colors.green | "Remote jupyter server started.")
         return running, new_servers[0]
 
 
@@ -193,21 +195,25 @@ def get_free_local_socket():
 
 @click.command()
 @click.argument("remote_name", type=str)
+@click.option("--lab/--no-lab", default=False,
+              help="Start a jupyter lab server instead of a regular notebook server. "
+                   "This option is only effective if a new server is started (that is if no server is running "
+                   "on the remote or if the --new flag is used).")
 @click.option("-e", "--conda_env", default=None,
               help="Name of the remote conda environment")
 @click.option("-u", "--user", default=None,
               help="User name on remote machine. Not required,"
                    "if your local ~/.ssh/config file is configured properly.")
-@click.option("-m", "--module", multiple=True, help="Modules to be loaded before starting up the notebook server.")
+@click.option("-m", "--module", multiple=True, help="Modules to be loaded before starting up the jupyter server.")
 @click.option("--new/--no-new", default=False,
               help="Start a new server even if servers are still running on the remote.")
 @click.option("--kill/--no-kill", default=False,
-              help="Kill notebook servers running on remote.")
+              help="Kill jupyter servers running on remote.")
 @click.version_option(__version__)
-def run_remote(remote_name, conda_env, user, module, new, kill):
+def run_remote(remote_name, lab, conda_env, user, module, new, kill):
     """
-    Jump on a jupyter notebook that is running on a remote
-    server in a conda environment.
+    Jump on a jupyter server that is running on a remote
+    host in a conda environment.
     """
 
 
@@ -228,21 +234,21 @@ def run_remote(remote_name, conda_env, user, module, new, kill):
         for i, env in enumerate(conda_environment_paths):
             print(colors.blue | "{:>3}:    {:<35} {}".format(i+1, env, conda_environment_paths[env]))
         i = user_input(
-            "Enter the ID of the remote conda environment that would you like to run the notebook in:",
+            "Enter the ID of the remote conda environment that would you like to run the jupyter server in:",
             type_conversion=int,
             is_valid=lambda x: 0 < x <= len(conda_environment_paths),
             hint="Enter a number between 1 and {}".format(len(conda_environment_paths))
         )
         conda_env = list(conda_environment_paths.items())[i-1][0]
 
-    print(colors.green | "Trying to run jupyter notebook in remote conda environment {}".format(conda_env))
+    print(colors.green | "Trying to run jupyter server in remote conda environment {}".format(conda_env))
 
 
-    # STEP 3: NOTEBOOK SERVER
+    # STEP 3: JUPYTER SERVER
     # =======================
     with remote.machine:
 
-        # Get a list of running notebooks
+        # Get a list of running servers
         jupyter = remote.machine["{}/bin/jupyter".format(conda_environment_paths[conda_env])]
         try:
             running = jupyter("notebook", "list")
@@ -258,28 +264,28 @@ def run_remote(remote_name, conda_env, user, module, new, kill):
         # Either start a new server or grab an existing one
         if new:
             # start a new server without asking
-            print("Starting notebook server on remote {} in environment {}".format(remote.name, conda_env))
-            running, server_id = remote.start_notebook_server(jupyter, module, running)
+            print(f"Starting {'lab' if lab else 'notebook'} server on remote {remote.name} in environment {conda_env}")
+            running, server_id = remote.start_jupyter_server(jupyter, module, running, use_jupyter_lab=lab)
 
         elif len(running) == 0:
-            # no notebooks running: Ask user whether they want to start a new server
+            # no servers running: Ask user whether they want to start a new server
             print(colors.warn | "No servers running on remote.")
             start_new = user_input(
-                "Would you like to start a new jupyter notebook server? (y/n)",
+                f"Would you like to start a new jupyter {'lab' if lab else 'notebook'} server? (y/n)",
                 is_valid=lambda x: x in "yn",
                 hint="Enter y or n."
             )
             if start_new == 'n':
                 return 1
-            print("Starting notebook server on remote {} in environment {}".format(remote.name, conda_env))
-            running, server_id = remote.start_notebook_server(jupyter, module, running)
+            print(f"Starting {'lab' if lab else 'notebook'} server on remote {remote.name} in environment {conda_env}")
+            running, server_id = remote.start_jupyter_server(jupyter, module, running, use_jupyter_lab=lab)
 
         elif len(running) == 1:
-            # One notebook server running: Use that one
+            # One server running: Use that one
             server_id = 0
 
         elif len(running) > 1:
-            # Multiple notebook servers running: Ask the user which one to use
+            # Multiple servers running: Ask the user which one to use
             print(colors.warn | "Multiple servers running on remote:")
             for i in range(len(running)):
                 print(colors.blue | "  {:>3}: {}".format(i+1, running[i]))
@@ -309,7 +315,7 @@ def run_remote(remote_name, conda_env, user, module, new, kill):
             if killing == "n":
                 return 1
             else:
-                print("Killing notebook server running on remote port {}".format(remote_port))
+                print("Killing jupyter server running on remote port {}".format(remote_port))
                 jupyter("notebook", "stop", "{}".format(remote_port))
                 print(colors.green | "Done.")
                 return 1
