@@ -315,7 +315,7 @@ def run_remote(remote_name, lab, conda_env, user, module, new, kill):
             if killing == "n":
                 return 1
             else:
-                print("Killing jupzter server running on remote port {}".format(remote_port))
+                print("Killing jupyter server running on remote port {}".format(remote_port))
                 jupyter("notebook", "stop", "{}".format(remote_port))
                 print(colors.green | "Done.")
                 return 1
