@@ -1,7 +1,5 @@
 """
-Manage and connect to jupyter notebooks/labs that are running on remote servers (in conda environments).
-Requires the python packages click and plumbum on the local machine and conda (+ jupyter and nb_conda)
-on the remote machine.
+Manage and connect to jupyter notebooks/labs on remote servers.
 
 Run `jump.py --help` for usage instructions.
 """
@@ -14,12 +12,13 @@ import socket
 import subprocess
 import platform
 import textwrap
-from collections import OrderedDict
+import re
+import json
+import urllib
+import click
 
 from plumbum import SshMachine, BG, colors
 from jump import __version__
-
-import click
 
 
 class JumpException(Exception):
@@ -77,10 +76,6 @@ class Remote(object):
         if hasattr(self, "ssh_machine"):
             self.ssh_machine.close()
 
-    def __call__(self, command):
-        stdin, stdout, stderr = self.client.exec_command(command)
-        return stdout
-
     def _collect_talk(self):
         """
         Visit remote to see if a stable connection can be established and find out if the remote talks about anything
@@ -113,29 +108,72 @@ class Remote(object):
             output = output[:-len(self.talk[1])]
         return output
 
-    def get_conda_envs(self):
+    def run_with_shell(self, command):
         """
-        Get the conda environments and their paths on the remote machine.
+        Run a command on the remote machine using the shell and set the environment variables
+
+        Args:
+            command (str): The command to run.
 
         Returns:
-            A dictionary {env_name: env_path}
+            The output of the command.
         """
-        print(colors.green | "Retrieving a list of environments that are available on {} ...".format(self.name))
-        # Running ssh as a subprocess to make sure conda is detected; conda is usually implemented as a bash function,
-        # therefore not supported by plumbum's remote["command"] syntax.
-        remotename = self.name if self.user is None else f"{self.user}@{self.name}"
-        with subprocess.Popen(["ssh", remotename, "conda", "env", "list"],
-                              stdout=subprocess.PIPE) as ssh_conda:
-            env_list = ssh_conda.communicate()[0]
-        env_list = self.strip_talk(env_list.decode("utf8")).split(os.linesep)
-        env_dict = OrderedDict()
-        for line in env_list:
-            line = line.strip()
-            if line.startswith('#'): continue
-            if " conda " in line and "environments:" in line:
-                continue
-            line = line.replace("*","")
-            env_dict[line.split()[0]] = line.split()[1]
+        output = self.machine["sh"]("-c", "%s && env" % command)
+        re_valid_path = re.compile(r'[^\s=\(\)%]+=')
+        dic = {line.split('=',1)[0]:line.split('=',1)[1] for line in output.splitlines() if re_valid_path.match(line)}
+        self.machine.env.update(dic)
+
+        return output
+
+    def get_list_notebooks(self, jupyter):
+        """
+        Get a list of all notebooks that are currently running on the remote machine.
+
+        Returns:
+            A list of dictionaries, each containing the information about a single notebook.
+        """
+        print(colors.green | "Retrieving a list of notebooks that are currently running on {} ...".format(self.name))
+        try:
+            running = jupyter("notebook", "list")
+        except:
+            raise JumpException("Fatal: Jupyter is not installed in remote environment {}".format(env_name))
+        running = self.strip_talk(running).split(os.linesep)[1:]
+        return running
+
+    def activate_virtualenv(self, env_name):
+        self.run_with_shell("source %s/bin/activate" % env_name)
+
+    def get_envs(self, package_manager):
+        if package_manager == ("conda", "miniconda"):
+            return self.get_conda_envs()
+        elif package_manager in ("mamba", "micromamba"):
+            return self.get_mamba_envs()
+        else:
+            raise JumpException("Package manager {} is not supported.".format(package_manager))
+
+    def get_mamba_envs(self):
+        print(colors.green | "Retrieving a list of mamba envs that are available on {} ...".format(self.name))
+        self.run_with_shell("source $HOME/.bashrc")
+        exe = self.machine.env['MAMBA_EXE']
+        output = self.machine[exe]('env', 'list', '--json')
+        
+        env_list = json.loads(output)['envs']
+        env_dict = {os.path.basename(env): env for env in env_list}
+        if self.machine.env['MAMBA_ROOT_PREFIX'] in env_dict.values():
+            env_dict['base'] = self.machine.env['MAMBA_ROOT_PREFIX']
+        return env_dict
+
+    def get_conda_envs(self):
+        print(colors.green | "Retrieving a list of conda envs that are available on {} ...".format(self.name))
+        self.run_with_shell("source $HOME/.bashrc")
+        exe = self.machine.env['CONDA_EXE']
+        output = self.machine[exe]('env', 'list', '--json')
+        
+        env_list = json.loads(output)['envs']
+        env_dict = {os.path.basename(env): env for env in env_list}
+        conda_base_path = self.machine.env['CONDA_EXE'].replace('/bin/conda', '')
+        if conda_base_path in env_dict.values():
+            env_dict['base'] = conda_base_path
         return env_dict
 
     def start_jupyter_server(self, jupyter_command, modules, running_servers, use_jupyter_lab=False):
@@ -193,141 +231,17 @@ def get_free_local_socket():
         return addr[1]
 
 
-@click.command()
-@click.argument("remote_name", type=str)
-@click.option("--lab/--no-lab", default=False,
-              help="Start a jupyter lab server instead of a regular notebook server. "
-                   "This option is only effective if a new server is started (that is if no server is running "
-                   "on the remote or if the --new flag is used).")
-@click.option("-e", "--conda_env", default=None,
-              help="Name of the remote conda environment")
-@click.option("-u", "--user", default=None,
-              help="User name on remote machine. Not required,"
-                   "if your local ~/.ssh/config file is configured properly.")
-@click.option("-m", "--module", multiple=True, help="Modules to be loaded before starting up the jupyter server.")
-@click.option("--new/--no-new", default=False,
-              help="Start a new server even if servers are still running on the remote.")
-@click.option("--kill/--no-kill", default=False,
-              help="Kill jupyter servers running on remote.")
-@click.version_option(__version__)
-def run_remote(remote_name, lab, conda_env, user, module, new, kill):
+def open_local(url_remote, remote_host):
     """
-    Jump on a jupyter server that is running on a remote
-    host in a conda environment.
+    Open a remote url in a local web browser.
     """
+    url_parsed = urllib.parse.urlparse(url_remote)
 
-
-    # STEP 1: REMOTE
-    # ==============
-    if platform.system() == "Windows":
-        raise JumpException("Sorry, Windows operating systems are not supported, yet.")
-
-    print(colors.green | "Trying to establish a connection to {}".format(remote_name))
-    remote = Remote(remote_name, user)
-
-
-    # STEP 2: CONDA ENVIRONMENT
-    # =========================
-    # Check if conda environment is specified, else prompt for it
-    conda_environment_paths = remote.get_conda_envs()
-    if conda_env is None:
-        for i, env in enumerate(conda_environment_paths):
-            print(colors.blue | "{:>3}:    {:<35} {}".format(i+1, env, conda_environment_paths[env]))
-        i = user_input(
-            "Enter the ID of the remote conda environment that would you like to run the jupyter server in:",
-            type_conversion=int,
-            is_valid=lambda x: 0 < x <= len(conda_environment_paths),
-            hint="Enter a number between 1 and {}".format(len(conda_environment_paths))
-        )
-        conda_env = list(conda_environment_paths.items())[i-1][0]
-
-    print(colors.green | "Trying to run jupyter server in remote conda environment {}".format(conda_env))
-
-
-    # STEP 3: JUPYTER SERVER
-    # =======================
-    with remote.machine:
-
-        # Get a list of running servers
-        jupyter = remote.machine["{}/bin/jupyter".format(conda_environment_paths[conda_env])]
-        try:
-            running = jupyter("notebook", "list")
-        except:
-            raise JumpException("Fatal: Jupyter is not installed in remote conda environment {}".format(conda_env))
-        running = remote.strip_talk(running).split(os.linesep)[1:]
-
-        if module and (running and not new):
-            print(colors.warn | "Warning: -m/--module argument will be ignored because server is already running. "
-                                "If you want to force-start a new server in an environment that has the modules loaded "
-                                "use the --new keyword.")
-
-        # Either start a new server or grab an existing one
-        if new:
-            # start a new server without asking
-            print(f"Starting {'lab' if lab else 'notebook'} server on remote {remote.name} in environment {conda_env}")
-            running, server_id = remote.start_jupyter_server(jupyter, module, running, use_jupyter_lab=lab)
-
-        elif len(running) == 0:
-            # no servers running: Ask user whether they want to start a new server
-            print(colors.warn | "No servers running on remote.")
-            start_new = user_input(
-                f"Would you like to start a new jupyter {'lab' if lab else 'notebook'} server? (y/n)",
-                is_valid=lambda x: x in "yn",
-                hint="Enter y or n."
-            )
-            if start_new == 'n':
-                return 1
-            print(f"Starting {'lab' if lab else 'notebook'} server on remote {remote.name} in environment {conda_env}")
-            running, server_id = remote.start_jupyter_server(jupyter, module, running, use_jupyter_lab=lab)
-
-        elif len(running) == 1:
-            # One server running: Use that one
-            server_id = 0
-
-        elif len(running) > 1:
-            # Multiple servers running: Ask the user which one to use
-            print(colors.warn | "Multiple servers running on remote:")
-            for i in range(len(running)):
-                print(colors.blue | "  {:>3}: {}".format(i+1, running[i]))
-            server_id = user_input(
-                "Which id would you like? ",
-                type_conversion=int,
-                is_valid=lambda x: 1 <= x <= len(running),
-                hint=f"Enter a number between 1 and {len(running)}"
-            ) - 1
-
-        notebook_server = running[server_id].split(' :')[0]
-
-        # Retrieve port number of remote notebook server
-        print(f"Using server: {notebook_server}")
-        remote_port = notebook_server.split(":")[2].split("/")[0]
-        remote_path = notebook_server.split("/")[3]
-
-
-        # (STEP 3b: KILL)
-        # ===============
-        if kill:
-            killing = user_input(
-                "Would you like to kill the notebook server? (y/n)",
-                is_valid=lambda x: x in "yn",
-                hint="Enter y or n"
-            )
-            if killing == "n":
-                return 1
-            else:
-                print("Killing jupyter server running on remote port {}".format(remote_port))
-                jupyter("notebook", "stop", "{}".format(remote_port))
-                print(colors.green | "Done.")
-                return 1
-
-
-    # STEP 4: OPEN LOCALLY
-    # ====================
     # Bind remote port to a free local port
     local_port = get_free_local_socket()
-    local_url = "http://localhost:{}/{}".format(local_port, remote_path)
-    print(colors.green | "Opening Tunnel between local port {} and remote port {}".format(local_port, remote_port))
-    os.system("ssh -f {} -L {}:localhost:{} -N".format(remote.name, local_port, remote_port))
+    local_url = url_parsed._replace(netloc="localhost:{}".format(local_port)).geturl()
+    print(colors.green | "Opening Tunnel between local port {} and remote port {}".format(local_port, url_parsed.port))
+    os.system("ssh -f {} -L {}:localhost:{} -N".format(remote_host, local_port, url_parsed.port))
 
     # Open remote server in a local web browser
     print(colors.green | "Opening web browser at local url:")
@@ -335,9 +249,188 @@ def run_remote(remote_name, lab, conda_env, user, module, new, kill):
     webbrowser.open(local_url)
 
 
+@click.group(invoke_without_command=True)
+@click.argument("remote_hostname", type=str)
+@click.option("-u", "--user", default=None,
+              help="User name on remote machine. Not required,"
+                   "if your local ~/.ssh/config file is configured properly.")
+@click.option("-e", "--env-name", default=None,
+              help="Name of the remote environment")
+@click.option("--env-type", type=click.Choice(["conda", "miniconda", "mamba", "micromamba", "virtualenv"]), default="conda",
+              help="Type of the remote environment")
+@click.option("--setup-script", default=None, help='Script to be executed before starting up the jupyter server.')
+@click.option("-m", "--module", multiple=True, help="Modules to be loaded before starting up the jupyter server.")
+@click.version_option(__version__)
+@click.pass_context
+def cli(ctx, remote_hostname, user, env_name, env_type, setup_script, module):
+    if platform.system() == "Windows":
+        raise JumpException("Sorry, Windows operating systems are not supported, yet.")
+
+    ctx.ensure_object(dict)
+
+    print(colors.green | "Trying to establish a connection to {}".format(remote_hostname))
+    remote = Remote(remote_hostname, user)
+
+    if setup_script is not None:
+        print(colors.green | "Trying to run setup script {}".format(setup_script))
+        remote.run_with_shell(setup_script)
+
+    if env_type is None:
+        if env_name is not None:
+            raise JumpException("Fatal: --env-name specified, but no --env-type specified")
+        # no environment specified, use jupyter from the system environment
+        jupyter = remote.machine['jupyter']
+    elif env_type == 'virtualenv':
+        if env_name is None:
+            raise JumpException("Fatal: --env-name must be specified for virtualenvs")
+        print(colors.green | "Setup virtualenv %s" % env_name)
+        remote.activate_virtualenv(env_name)
+        jupyter = remote.machine['jupyter']
+    else:
+        available_envs = remote.get_envs(env_type)
+        if env_name is not None:
+            if env_name not in available_envs:
+                raise JumpException("Fatal: Environment {} not found in remote machine, list of available environments: {}".format(env_name, available_envs))
+            jupyter = remote.machine['%s/bin/jupyter' % available_envs[env_name]]
+        else:
+            for i, (proposed_envname, proposed_envpath) in enumerate(available_envs.items()):
+                print(colors.blue | "{:>3}:    {:<35} {}".format(i+1, proposed_envname, proposed_envpath))
+            i = user_input(
+                "Enter the ID of the remote conda environment that would you like to run the jupyter server in:",
+                type_conversion=int,
+                is_valid=lambda x: 0 < x <= len(available_envs),
+                hint="Enter a number between 1 and {}".format(len(available_envs))
+            )
+            env_name = list(available_envs.keys())[i]
+            jupyter = remote.machine['%s/bin/jupyter' % available_envs[env_name]]
+
+    ctx.obj["remote_hostname"] = remote_hostname
+    ctx.obj["remote"] = remote
+    ctx.obj['jupyter'] = jupyter
+    ctx.obj["module"] = module
+
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(start, lab=False)
+
+
+@cli.command()
+@click.pass_context
+def attach(ctx):
+    """
+    Jump on a running jupyter kernel running on the remote host
+    """
+    remote = ctx.obj["remote"]
+    jupyter = ctx.obj["jupyter"]
+
+    # Get a list of running servers
+    running = remote.get_list_notebooks(jupyter)
+
+    if len(running) == 0:
+        print(colors.warn | "No servers running on remote.")
+        return
+    elif len(running) == 1:
+        server_id = 0
+    elif len(running) > 1:
+        print(colors.warn | "Multiple servers running on remote:")
+        for i in range(len(running)):
+            print(colors.blue | "  {:>3}: {}".format(i+1, running[i]))
+        server_id = user_input(
+            "Which id would you like? ",
+            type_conversion=int,
+            is_valid=lambda x: 1 <= x <= len(running),
+            hint=f"Enter a number between 1 and {len(running)}"
+        ) - 1
+
+    notebook_server = running[server_id].split(' :')[0]
+    print(f"Using server: {notebook_server}")
+    open_local(notebook_server, remote.name)
+
+
+@cli.command("list")
+@click.pass_context
+def list_notebooks(ctx):
+    """
+    List all running jupyter servers on a remote host
+    """
+    remote = ctx.obj["remote"]
+    jupyter = ctx.obj["jupyter"]
+
+    running = remote.get_list_notebooks(jupyter)
+    print('\n'.join(running))
+
+
+@cli.command()
+@click.option("--lab/--no-lab", default=False,
+              help="Start a jupyter lab server instead of a regular notebook server. "
+                   "This option is only effective if a new server is started (that is if no server is running "
+                   "on the remote or if the --new flag is used).")
+@click.pass_context
+def start(ctx, lab):
+    """
+    Start a new jupyter server on the remote host
+    """
+
+    remote = ctx.obj["remote"]
+    jupyter = ctx.obj["jupyter"]
+    module = ctx.obj["module"]
+
+    # Get a list of running servers
+    running = remote.get_list_notebooks(jupyter)
+
+    print(f"Starting {'lab' if lab else 'notebook'} server on remote {remote.name}")
+    running, server_id = remote.start_jupyter_server(jupyter, module, running, use_jupyter_lab=lab)
+
+    notebook_server = running[server_id].split(' :')[0]
+
+    # Retrieve port number of remote notebook server
+    print(f"Using server: {notebook_server}")
+
+    open_local(notebook_server, remote.name)
+
+
+@cli.command()
+@click.pass_context
+def kill(ctx):
+    """ kill a remote jupyter server"""
+    print(colors.green | f"Killing jupyter server on {ctx.obj['remote_hostname']}")
+    jupyter = ctx.obj['jupyter']
+    remote = ctx.obj['remote']
+
+    running = remote.get_list_notebooks(jupyter)
+
+    if len(running) == 0:
+        print(colors.warn | "No servers running on remote, cannot kill.")
+        return 1
+    elif len(running) == 1:
+        server = running[0]
+    elif len(running) > 1:
+        # Multiple servers running: Ask the user which one to use
+        print(colors.warn | "Multiple servers running on remote:")
+        for i in range(len(running)):
+            print(colors.blue | "  {:>3}: {}".format(i+1, running[i]))
+        server_id = user_input(
+            "Which id would you like? ",
+            type_conversion=int,
+            is_valid=lambda x: 1 <= x <= len(running),
+            hint=f"Enter a number between 1 and {len(running)}"
+        ) - 1
+
+        server = running[server_id]
+
+    # Retrieve port number of remote notebook server
+    print(f"Using server: {server}")
+    remote_port = urllib.parse.urlparse(server).port
+
+    print("Killing jupyter server running on remote port {}".format(remote_port))
+    jupyter("notebook", "stop", "{}".format(remote_port))
+    print(colors.green | "Done.")
+    return 1
+
+
+
 def main():
     try:
-        returncode = run_remote()
+        returncode = cli(obj={})
     except JumpException as e:
         print(colors.red & colors.bold | str(e))
         sys.exit(1)

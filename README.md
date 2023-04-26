@@ -15,7 +15,7 @@ Getting Started
 
 ```bash
 conda install -c conda-forge jump
-jump REMOTENAME
+jump REMOTENAME --env-type conda
 ```
 
 For options, type
@@ -26,29 +26,29 @@ jump --help
 Examples
 --------
 
-Starting a new notebook server in remote conda environment `myenv` on a remote machine `mycluster`
+Starting a new notebook server in remote virtual environment `myenv` on a remote machine `mycluster`
 ```bash
-jump mycluster -e myenv --new
+jump mycluster --env-type virtualenv --env-name myenv start
 ```
 
 Starting a new jupyter lab server in remote conda environment `myenv` on a remote machine `mycluster`
 ```bash
-jump mycluster --lab -e myenv --new
+jump mycluster --env-type conda --env-name myenv start --lab
 ```
 
 Connecting to an existing jupyter server
 ```bash
-jump mycluster -e myenv
+jump mycluster --env-type conda --env-name myenv attach
 ```
 
 Starting a new notebook server with remote module `cuda/9.2` loaded for GPU support
 ```bash
-jump mycluster -e myenv --new -m cuda/9.2
+jump mycluster --env-type conda --env-name -m cuda/9.2 start
 ```
 
 Killing a notebook server
 ```bash
-jump mycluster -e myenv --kill
+jump mycluster --env-type conda --env-name myenv --kill
 ```
 
 Requirements
@@ -62,7 +62,6 @@ On remote machine:
 - anaconda or miniconda
 - jupyter notebook (at least installed in one conda environment, jupyter > 5.1 required for the --kill option)
 - jupyter lab (to support the `--lab` option)
-- recommended: nb_conda
 
 Windows systems are not supported.
 
@@ -100,5 +99,3 @@ you may also want to define those remotes explicitly:
 Host NAME_OF_REMOTE
     ProxyCommand ssh FULL_LOGIN_NODE_NAME_OR_SHORTCUT -W %h:%p
 ```
-
-
