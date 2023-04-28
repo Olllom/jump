@@ -389,40 +389,48 @@ def start(ctx, lab):
 
 
 @cli.command()
+@click.option("-a", "--all", "killall", is_flag=True, default=False)
 @click.pass_context
-def kill(ctx):
-    """ kill a remote jupyter server"""
+def kill(ctx, killall=False):
+    """ kill a remote jupyter server """
     print(colors.green | f"Killing jupyter server on {ctx.obj['remote_hostname']}")
     jupyter = ctx.obj['jupyter']
     remote = ctx.obj['remote']
 
     running = remote.get_list_notebooks(jupyter)
+    server_to_be_killed = []
 
     if len(running) == 0:
         print(colors.warn | "No servers running on remote, cannot kill.")
         return 1
+    elif killall:
+        server_to_be_killed = running[:]
     elif len(running) == 1:
-        server = running[0]
+        server_to_be_killed = [running[0]]
     elif len(running) > 1:
         # Multiple servers running: Ask the user which one to use
         print(colors.warn | "Multiple servers running on remote:")
         for i in range(len(running)):
             print(colors.blue | "  {:>3}: {}".format(i+1, running[i]))
         server_id = user_input(
-            "Which id would you like? ",
+            "Which id would you like? (use 0 to kill all of them) ",
             type_conversion=int,
-            is_valid=lambda x: 1 <= x <= len(running),
-            hint=f"Enter a number between 1 and {len(running)}"
+            is_valid=lambda x: 0 <= x <= len(running),
+            hint=f"Enter a number between 0 and {len(running)}"
         ) - 1
 
-        server = running[server_id]
+        if server_id != -1:
+            server_to_be_killed = [running[server_id]]
+        else:
+            server_to_be_killed = running[:]
 
-    # Retrieve port number of remote notebook server
-    print(f"Using server: {server}")
-    remote_port = urllib.parse.urlparse(server).port
+    for server in server_to_be_killed:
+        # Retrieve port number of remote notebook server
+        url_server = server.split("::")[0]
+        remote_port = urllib.parse.urlparse(url_server).port
 
-    print("Killing jupyter server running on remote port {}".format(remote_port))
-    jupyter("notebook", "stop", "{}".format(remote_port))
+        print(f"Killing jupyter server {server} running on remote port {remote_port}")
+        jupyter("notebook", "stop", "{}".format(remote_port))
     print(colors.green | "Done.")
     return 1
 
