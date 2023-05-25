@@ -47,15 +47,16 @@ def user_input(question, is_valid=lambda _: True, type_conversion=str, hint=""):
 
 class Remote(object):
     """Wrapper for a remote machine."""
-    def __init__(self, name, user=None):
+    def __init__(self, name, user=None, password=None):
         self.name = name
         self.user = user
+        self.password = password
         try:
             self.talk = self._collect_talk()
         except FileNotFoundError:
             raise JumpException("ssh seems to not be working on your machine. Unable to connect.")
         try:
-            self.machine = SshMachine(self.name, user=self.user)
+            self.machine = SshMachine(self.name, user=self.user, password=self.password)
         except ValueError as e:
             if "write to closed file" in str(e):
                 raise JumpException(textwrap.dedent(
@@ -254,6 +255,7 @@ def open_local(url_remote, remote_host):
 @click.option("-u", "--user", default=None,
               help="User name on remote machine. Not required,"
                    "if your local ~/.ssh/config file is configured properly.")
+@click.option("--password", default=None, help="the ssh password.")
 @click.option("-e", "--env-name", default=None,
               help="Name of the remote environment")
 @click.option("--env-type", type=click.Choice(["conda", "miniconda", "mamba", "micromamba", "virtualenv"]), default="conda",
@@ -262,14 +264,14 @@ def open_local(url_remote, remote_host):
 @click.option("-m", "--module", multiple=True, help="Modules to be loaded before starting up the jupyter server.")
 @click.version_option(__version__)
 @click.pass_context
-def cli(ctx, remote_hostname, user, env_name, env_type, setup_script, module):
+def cli(ctx, remote_hostname, user, password, env_name, env_type, setup_script, module):
     if platform.system() == "Windows":
         raise JumpException("Sorry, Windows operating systems are not supported, yet.")
 
     ctx.ensure_object(dict)
 
     print(colors.green | "Trying to establish a connection to {}".format(remote_hostname))
-    remote = Remote(remote_hostname, user)
+    remote = Remote(remote_hostname, user, password)
 
     if setup_script is not None:
         print(colors.green | "Trying to run setup script {}".format(setup_script))
