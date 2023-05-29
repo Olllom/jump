@@ -47,7 +47,6 @@ For options, type
 ```bash
 jump --help
 ```
-:warning: **If you are using mobile browser**: Be very careful here!
 
 > **Warning**
 > Jump do not kill automatically your sessions. Closing the browser tab will not kill the session on the server. You have to kill the session manually using the `kill` action. This feature is useful if your connection to the remote machine drops. In that case you only need to attach your session again.
