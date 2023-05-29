@@ -51,8 +51,7 @@ jump --help
 > **Warning**
 > Jump do not kill automatically your sessions. Closing the browser tab will not kill the session on the server. You have to kill the session manually using the `kill` action. This feature is useful if your connection to the remote machine drops. In that case you only need to attach your session again.
 
-Examples
---------
+# Examples
 
 Starting a new notebook server in remote virtual environment `myenv` on a remote machine `REMOTEMACHINE` (`start` at the end is optional)
 
@@ -93,10 +92,9 @@ jump --env-type conda --env-name myenv REMOTEMACHINE kill
 Killing all notebook servers
 ```bash
 jump  --env-type conda --env-name myenv REMOTEMACHINE kill --all
+```
 
-
-Requirements
-------------
+# Requirements
 
 On local (UNIX) machine:
 - plumbum and click (are installed automatically)
@@ -109,8 +107,7 @@ On remote machine:
 
 Windows systems are not supported.
 
-Efficient SSH Setup
--------------------
+# Efficient SSH Setup
 
 In order to use this script efficiently, it is desirable to have
 an efficient setup in your ~/.ssh/config file.
