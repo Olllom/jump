@@ -11,8 +11,8 @@ with open('README.md') as readme_file:
 
 
 setup(
-    author="Andreas Krämer",
-    author_email='kraemer.research@gmail.com',
+    author="Andreas Krämer, Ruggero Turra",
+    author_email='kraemer.research@gmail.com, ruggero.turra@gmail.com',
     classifiers=[
         'Development Status :: 2 - Pre-Alpha',
         'Intended Audience :: Developers',
