@@ -80,7 +80,7 @@ class Remote(object):
     def _collect_talk(self):
         """
         Visit remote to see if a stable connection can be established and find out if the remote talks about anything
-        else than Jambalaya, Baby!
+        else than Jambalayalaya
         """
         # This is the initial connection to the server.
         # In order to support every possible authentification pattern expected by the remote, this command
@@ -142,10 +142,10 @@ class Remote(object):
         return running
 
     def activate_virtualenv(self, env_name):
-        self.run_with_shell("source %s/bin/activate" % env_name)
+        self.run_with_shell(". %s/bin/activate" % env_name)
 
     def get_envs(self, package_manager):
-        if package_manager == ("conda", "miniconda"):
+        if package_manager in ("conda", "miniconda"):
             return self.get_conda_envs()
         elif package_manager in ("mamba", "micromamba"):
             return self.get_mamba_envs()
@@ -154,7 +154,7 @@ class Remote(object):
 
     def get_mamba_envs(self):
         print(colors.green | "Retrieving a list of mamba envs that are available on {} ...".format(self.name))
-        self.run_with_shell("source $HOME/.bashrc")
+        self.run_with_shell(". $HOME/.bashrc")
         exe = self.machine.env['MAMBA_EXE']
         output = self.machine[exe]('env', 'list', '--json')
         
@@ -166,7 +166,7 @@ class Remote(object):
 
     def get_conda_envs(self):
         print(colors.green | "Retrieving a list of conda envs that are available on {} ...".format(self.name))
-        self.run_with_shell("source $HOME/.bashrc")
+        self.run_with_shell(". $HOME/.bashrc")
         exe = self.machine.env['CONDA_EXE']
         output = self.machine[exe]('env', 'list', '--json')
         
@@ -195,7 +195,7 @@ class Remote(object):
         if modules:
             # try if the module loading works
             print(f"    Trying to load modules {modules}")
-            load_command = " && module load ".join(["source /etc/profile"] + list(modules))
+            load_command = " && module load ".join([". /etc/profile"] + list(modules))
             with subprocess.Popen(["ssh", self.name, load_command]) as ssh:
                 ssh.communicate()
                 if ssh.returncode:
@@ -298,7 +298,7 @@ def cli(ctx, remote_hostname, user, password, env_name, env_type, setup_script, 
             for i, (proposed_envname, proposed_envpath) in enumerate(available_envs.items()):
                 print(colors.blue | "{:>3}:    {:<35} {}".format(i+1, proposed_envname, proposed_envpath))
             i = user_input(
-                "Enter the ID of the remote conda environment that would you like to run the jupyter server in:",
+                "Enter the ID of the remote conda environment that you would like to run the jupyter server in:",
                 type_conversion=int,
                 is_valid=lambda x: 0 < x <= len(available_envs),
                 hint="Enter a number between 1 and {}".format(len(available_envs))
@@ -306,13 +306,21 @@ def cli(ctx, remote_hostname, user, password, env_name, env_type, setup_script, 
             env_name = list(available_envs.keys())[i]
             jupyter = remote.machine['%s/bin/jupyter' % available_envs[env_name]]
 
+
+    # Get a list of running servers
+    running = remote.get_list_notebooks(jupyter)
+
     ctx.obj["remote_hostname"] = remote_hostname
     ctx.obj["remote"] = remote
     ctx.obj['jupyter'] = jupyter
     ctx.obj["module"] = module
+    ctx.obj["running"] = running
 
     if ctx.invoked_subcommand is None:
-        ctx.invoke(start, lab=False)
+        if len(running) == 0:
+            ctx.invoke(start, lab=False)
+        else:
+            ctx.invoke(attach)
 
 
 @cli.command()
@@ -322,10 +330,7 @@ def attach(ctx):
     Jump on a running jupyter kernel running on the remote host
     """
     remote = ctx.obj["remote"]
-    jupyter = ctx.obj["jupyter"]
-
-    # Get a list of running servers
-    running = remote.get_list_notebooks(jupyter)
+    running = ctx.obj["running"]
 
     if len(running) == 0:
         print(colors.warn | "No servers running on remote.")
@@ -354,18 +359,14 @@ def list_notebooks(ctx):
     """
     List all running jupyter servers on a remote host
     """
-    remote = ctx.obj["remote"]
-    jupyter = ctx.obj["jupyter"]
-
-    running = remote.get_list_notebooks(jupyter)
+    running = ctx.obj["running"]
+    
     print('\n'.join(running))
 
 
 @cli.command()
 @click.option("--lab/--no-lab", default=False,
-              help="Start a jupyter lab server instead of a regular notebook server. "
-                   "This option is only effective if a new server is started (that is if no server is running "
-                   "on the remote or if the --new flag is used).")
+              help="Start a jupyter lab server instead of a regular notebook server. ")
 @click.pass_context
 def start(ctx, lab):
     """
@@ -375,9 +376,7 @@ def start(ctx, lab):
     remote = ctx.obj["remote"]
     jupyter = ctx.obj["jupyter"]
     module = ctx.obj["module"]
-
-    # Get a list of running servers
-    running = remote.get_list_notebooks(jupyter)
+    running = ctx.obj["running"]
 
     print(f"Starting {'lab' if lab else 'notebook'} server on remote {remote.name}")
     running, server_id = remote.start_jupyter_server(jupyter, module, running, use_jupyter_lab=lab)
@@ -398,8 +397,8 @@ def kill(ctx, killall=False):
     print(colors.green | f"Killing jupyter server on {ctx.obj['remote_hostname']}")
     jupyter = ctx.obj['jupyter']
     remote = ctx.obj['remote']
-
-    running = remote.get_list_notebooks(jupyter)
+    running = ctx.obj['running']
+    
     server_to_be_killed = []
 
     if len(running) == 0:

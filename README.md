@@ -62,7 +62,7 @@ jump --env-type virtualenv --env-name myenv REMOTEMACHINE start
 Starting a new jupyter lab server in remote conda environment `myenv` on a remote machine `REMOTEMACHINE`
 
 ```bash
-jump --env-type conda --env-name myenv start REMOTEMACHINE --lab
+jump --env-type conda --env-name myenv REMOTEMACHINE start --lab
 ```
 
 Listing all the running notebook servers on a remote machine `REMOTEMACHINE`
