@@ -137,7 +137,7 @@ class Remote(object):
         try:
             running = jupyter("notebook", "list")
         except:
-            raise JumpException("Fatal: Jupyter is not installed in remote environment {}".format(env_name))
+            raise JumpException("Fatal: Jupyter is not installed in remote environment")
         running = self.strip_talk(running).split(os.linesep)[1:]
         return running
 
