@@ -137,7 +137,7 @@ class Remote(object):
         try:
             running = jupyter("notebook", "list")
         except:
-            raise JumpException("Fatal: Jupyter is not installed in remote environment {}".format(env_name))
+            raise JumpException(" Fatal: Failed to execute {} on the remote host.".format(jupyter))
         running = self.strip_talk(running).split(os.linesep)[1:]
         return running
 
@@ -254,15 +254,15 @@ def open_local(url_remote, remote_host):
 @click.argument("remote_hostname", type=str)
 @click.option("-u", "--user", default=None,
               help="User name on remote machine. Not required,"
-                   "if your local ~/.ssh/config file is configured properly.")
+                   "if your local ~/.ssh/config file is configured properly.", envvar="JUMP_USER")
 @click.option("--password", default=None, help="the ssh password.")
 @click.option("-e", "--env-name", default=None,
-              help="Name of the remote environment")
+              help="Name of the remote environment", envvar="JUMP_ENVNAME")
 @click.option("--env-type", type=click.Choice(["conda", "miniconda", "mamba", "micromamba", "virtualenv", "none"]), default="conda",
-              help="Type of the remote environment")
-@click.option("--setup-script", default=None, help='Script to be executed before starting up the jupyter server.')
-@click.option("-m", "--module", multiple=True, help="Modules to be loaded before starting up the jupyter server.")
-@click.option("-j", "--jupyter-command", default=None, help="Jupyter command on the remote.")
+              help="Type of the remote environment", envvar="JUMP_ENVTYPE")
+@click.option("--setup-script", default=None, help='Script to be executed before starting up the jupyter server.', envvar="JUMP_SETUPSCRIPT")
+@click.option("-m", "--module", multiple=True, help="Modules to be loaded before starting up the jupyter server.", envvar="JUMP_MODULE")
+@click.option("-j", "--jupyter-command", default=None, help="Jupyter command on the remote.", envvar="JUMP_JUPYTERCOMMAND")
 @click.version_option(__version__)
 @click.pass_context
 def cli(ctx, remote_hostname, user, password, env_name, env_type, setup_script, module, jupyter_command):
