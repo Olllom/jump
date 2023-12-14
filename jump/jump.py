@@ -137,7 +137,7 @@ class Remote(object):
         try:
             running = jupyter("notebook", "list")
         except:
-            raise JumpException("Fatal: Jupyter is not installed in remote environment {}".format(env_name))
+            raise JumpException(" Fatal: Failed to execute {} on the remote host.".format(jupyter))
         running = self.strip_talk(running).split(os.linesep)[1:]
         return running
 
@@ -254,17 +254,18 @@ def open_local(url_remote, remote_host):
 @click.argument("remote_hostname", type=str)
 @click.option("-u", "--user", default=None,
               help="User name on remote machine. Not required,"
-                   "if your local ~/.ssh/config file is configured properly.")
+                   "if your local ~/.ssh/config file is configured properly.", envvar="JUMP_USER")
 @click.option("--password", default=None, help="the ssh password.")
 @click.option("-e", "--env-name", default=None,
-              help="Name of the remote environment")
-@click.option("--env-type", type=click.Choice(["conda", "miniconda", "mamba", "micromamba", "virtualenv"]), default="conda",
-              help="Type of the remote environment")
-@click.option("--setup-script", default=None, help='Script to be executed before starting up the jupyter server.')
-@click.option("-m", "--module", multiple=True, help="Modules to be loaded before starting up the jupyter server.")
+              help="Name of the remote environment", envvar="JUMP_ENVNAME")
+@click.option("--env-type", type=click.Choice(["conda", "miniconda", "mamba", "micromamba", "virtualenv", "none"]), default="conda",
+              help="Type of the remote environment", envvar="JUMP_ENVTYPE")
+@click.option("--setup-script", default=None, help='Script to be executed before starting up the jupyter server.', envvar="JUMP_SETUPSCRIPT")
+@click.option("-m", "--module", multiple=True, help="Modules to be loaded before starting up the jupyter server.", envvar="JUMP_MODULE")
+@click.option("-j", "--jupyter-command", default=None, help="Jupyter command on the remote.", envvar="JUMP_JUPYTERCOMMAND")
 @click.version_option(__version__)
 @click.pass_context
-def cli(ctx, remote_hostname, user, password, env_name, env_type, setup_script, module):
+def cli(ctx, remote_hostname, user, password, env_name, env_type, setup_script, module, jupyter_command):
     if platform.system() == "Windows":
         raise JumpException("Sorry, Windows operating systems are not supported, yet.")
 
@@ -277,23 +278,23 @@ def cli(ctx, remote_hostname, user, password, env_name, env_type, setup_script, 
         print(colors.green | "Trying to run setup script {}".format(setup_script))
         remote.run_with_shell(setup_script)
 
-    if env_type is None:
+    if env_type == "none":
         if env_name is not None:
             raise JumpException("Fatal: --env-name specified, but no --env-type specified")
         # no environment specified, use jupyter from the system environment
-        jupyter = remote.machine['jupyter']
+        default_jupyter_command = "jupyter"
     elif env_type == 'virtualenv':
         if env_name is None:
             raise JumpException("Fatal: --env-name must be specified for virtualenvs")
         print(colors.green | "Setup virtualenv %s" % env_name)
         remote.activate_virtualenv(env_name)
-        jupyter = remote.machine['jupyter']
+        default_jupyter_command = "jupyter"
     else:
         available_envs = remote.get_envs(env_type)
         if env_name is not None:
             if env_name not in available_envs:
                 raise JumpException("Fatal: Environment {} not found in remote machine, list of available environments: {}".format(env_name, available_envs))
-            jupyter = remote.machine['%s/bin/jupyter' % available_envs[env_name]]
+            default_jupyter_command = '%s/bin/jupyter' % available_envs[env_name]
         else:
             for i, (proposed_envname, proposed_envpath) in enumerate(available_envs.items()):
                 print(colors.blue | "{:>3}:    {:<35} {}".format(i+1, proposed_envname, proposed_envpath))
@@ -304,7 +305,11 @@ def cli(ctx, remote_hostname, user, password, env_name, env_type, setup_script, 
                 hint="Enter a number between 1 and {}".format(len(available_envs))
             )
             env_name = list(available_envs.keys())[i]
-            jupyter = remote.machine['%s/bin/jupyter' % available_envs[env_name]]
+            default_jupyter_command = '%s/bin/jupyter' % available_envs[env_name]
+
+    if jupyter_command is None:
+        jupyter_command = default_jupyter_command
+    jupyter = remote.machine[jupyter_command]
 
 
     # Get a list of running servers
